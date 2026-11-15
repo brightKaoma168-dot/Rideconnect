@@ -1,10 +1,233 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>RideConnect Manager Dashboard</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RideConnect Manager Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f2f6f3;color:#18352a}
+header{background:#087443;color:white;padding:22px}
+header h1{margin:0}
+main{max-width:1000px;margin:25px auto;padding:15px}
+.card{background:white;padding:20px;border-radius:12px;margin-bottom:18px;box-shadow:0 2px 8px #0001}
+input,button{width:100%;padding:13px;margin:8px 0;border-radius:7px;font-size:16px}
+input{border:1px solid #ccc}
+button{border:0;background:#087443;color:white;font-weight:bold}
+button:disabled{opacity:.6}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.stat{background:#e8f5ed;padding:18px;border-radius:10px}
+.stat strong{display:block;font-size:26px;margin-top:8px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px;border-bottom:1px solid #ddd}
+.table-wrap{overflow-x:auto}
+.hidden{display:none}
+#message{color:#b42318}
+</style>
 </head>
 <body>
-    <h1>Manager Dashboard</h1>
-    <p>Welcome, Manager.</p>
+
+<header>
+<h1>RideConnect Manager</h1>
+<p>Management and supervision dashboard</p>
+</header>
+
+<main>
+<section id="login" class="card">
+<h2>Manager Login</h2>
+<p>Sign in with your registered manager email.</p>
+<input id="email" type="email" placeholder="Manager email">
+<input id="password" type="password" placeholder="Password">
+<button id="loginBtn" onclick="login()">Sign In</button>
+<p id="message"></p>
+</section>
+
+<section id="dashboard" class="hidden">
+<div class="card">
+<h2>Welcome, Manager</h2>
+<p id="managerEmail"></p>
+<button onclick="refreshDashboard()">Refresh Dashboard</button>
+<button onclick="logout()">Sign Out</button>
+</div>
+
+<div class="card">
+<h2>RideConnect Overview</h2>
+<div class="grid">
+<div class="stat">Profiles<strong id="profiles">—</strong></div>
+<div class="stat">Drivers<strong id="drivers">—</strong></div>
+<div class="stat">Vehicles<strong id="vehicles">—</strong></div>
+<div class="stat">Rides<strong id="rides">—</strong></div>
+<div class="stat">Payments<strong id="payments">—</strong></div>
+<div class="stat">Commissions<strong id="commissions">—</strong></div>
+</div>
+<p id="dataMessage"></p>
+</div>
+
+<div class="card">
+<h2>Recent Rides</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr><th>Pickup</th><th>Destination</th><th>Status</th><th>Date</th></tr>
+</thead>
+<tbody id="rideRows">
+<tr><td colspan="4">Loading...</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+</main>
+
+<script>
+const SUPABASE_URL = "https://xfkbtlzsgoohkograzts.supabase.co";
+const SUPABASE_KEY = "sb_publishable_9zPdHmja-Z8SsztJ1GLZKw_-hO5iRof";
+
+const client = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+const message = document.getElementById("message");
+
+async function login(){
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  const button = document.getElementById("loginBtn");
+
+  message.textContent = "";
+
+  if(!email || !password){
+    message.textContent = "Enter your email and password.";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Signing in...";
+
+  const {data,error} = await client.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  button.disabled = false;
+  button.textContent = "Sign In";
+
+  if(error){
+    message.textContent = error.message;
+    return;
+  }
+
+  if(data.user?.app_metadata?.role !== "admin"){
+    await client.auth.signOut();
+    message.textContent = "Access denied. Manager authorization required.";
+    return;
+  }
+
+  await showDashboard(data.user);
+}
+
+async function showDashboard(user){
+  document.getElementById("login").classList.add("hidden");
+  document.getElementById("dashboard").classList.remove("hidden");
+  document.getElementById("managerEmail").textContent = user.email;
+  await refreshDashboard();
+}
+
+async function countRows(table){
+  const {count,error} = await client
+    .from(table)
+    .select("*",{count:"exact",head:true});
+
+  if(error) throw error;
+  return count ?? 0;
+}
+
+async function refreshDashboard(){
+  const output = document.getElementById("dataMessage");
+  output.textContent = "Loading dashboard data...";
+
+  try{
+    const [
+      profiles,drivers,vehicles,rides,payments,commissions
+    ] = await Promise.all([
+      countRows("profiles"),
+      countRows("driver_profiles"),
+      countRows("vehicles"),
+      countRows("rides"),
+      countRows("payments"),
+      countRows("commissions")
+    ]);
+
+    document.getElementById("profiles").textContent = profiles;
+    document.getElementById("drivers").textContent = drivers;
+    document.getElementById("vehicles").textContent = vehicles;
+    document.getElementById("rides").textContent = rides;
+    document.getElementById("payments").textContent = payments;
+    document.getElementById("commissions").textContent = commissions;
+
+    const {data,error} = await client
+      .from("rides")
+      .select("pickup_location,destination,status,created_at")
+      .order("created_at",{ascending:false})
+      .limit(8);
+
+    if(error) throw error;
+
+    const rows = document.getElementById("rideRows");
+    rows.replaceChildren();
+
+    if(!data.length){
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4;
+      td.textContent = "No rides recorded yet.";
+      tr.appendChild(td);
+      rows.appendChild(tr);
+    }else{
+      data.forEach(ride=>{
+        const tr = document.createElement("tr");
+        [
+          ride.pickup_location,
+          ride.destination,
+          ride.status,
+          new Date(ride.created_at).toLocaleDateString()
+        ].forEach(value=>{
+          const td = document.createElement("td");
+          td.textContent = value || "—";
+          tr.appendChild(td);
+        });
+        rows.appendChild(tr);
+      });
+    }
+
+    output.textContent = "Dashboard data loaded.";
+  }catch(error){
+    output.textContent = "Could not load data: " + error.message;
+  }
+}
+
+async function logout(){
+  await client.auth.signOut();
+  document.getElementById("dashboard").classList.add("hidden");
+  document.getElementById("login").classList.remove("hidden");
+  document.getElementById("password").value = "";
+  message.textContent = "You have signed out.";
+}
+
+async function checkSession(){
+  const {data} = await client.auth.getSession();
+  const user = data.session?.user;
+
+  if(user?.app_metadata?.role === "admin"){
+    await showDashboard(user);
+  }else if(user){
+    await client.auth.signOut();
+  }
+}
+
+checkSession();
+</script>
 </body>
-</html>
+                                  </html>
